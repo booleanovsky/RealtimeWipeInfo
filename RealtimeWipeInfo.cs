@@ -1,14 +1,16 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Reflection;
 using Oxide.Core;
 using Oxide.Core.Plugins;
 using Newtonsoft.Json;
 using Oxide.Core.Libraries.Covalence;
+using ProtoBuf;
 using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Realtime Wipe Info", "Ryan", "2.0.4", ResourceId = 2473)]
+    [Info("Realtime Wipe Info", "Ryan", "2.1.0", ResourceId = 2473)]
     class RealtimeWipeInfo : RustPlugin
     {
         #region Declaration
@@ -37,6 +39,10 @@ namespace Oxide.Plugins
         // Other variables
         private bool NewConfig;
 
+        // Persistance reflection
+        private FieldInfo CachedPersistance = typeof(UserPersistance).GetField("cachedData",
+            BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance | BindingFlags.NonPublic);
+
         #endregion
 
         #region Configuration
@@ -57,6 +63,9 @@ namespace Oxide.Plugins
 
             [JsonProperty("Command Settings")]
             public CommandSettings Command;
+
+            [JsonProperty("Blueprint settings")]
+            public BlueprintSettings Blueprint;
 
             public static ConfigFile DefaultConfig()
             {
@@ -117,7 +126,8 @@ namespace Oxide.Plugins
                     {
                         Enabled = true,
                         Command = "wipe"
-                    }
+                    },
+                    Blueprint = new BlueprintSettings()
                 };
             }
         }
@@ -225,6 +235,25 @@ namespace Oxide.Plugins
             }
         }
 
+        private class BlueprintSettings
+        {
+            [JsonProperty("Enable blueprint wipe tracking")]
+            public bool Enabled;
+
+            [JsonProperty("Add BP wipe to description")]
+            public bool UseDescription;
+
+            [JsonProperty("Use BP chat reply")]
+            public bool UseChat;
+
+            public BlueprintSettings()
+            {
+                Enabled = true;
+                UseDescription = true;
+                UseChat = true;
+            }
+        }
+
         #endregion
 
         protected override void LoadDefaultConfig()
@@ -240,7 +269,16 @@ namespace Oxide.Plugins
             try
             {
                 CFile = Config.ReadObject<ConfigFile>();
-                if (CFile == null) Regenerate();
+                if (CFile == null)
+                {
+                    Regenerate();
+                    return;
+                }
+                if (CFile.Blueprint == null)
+                {
+                    CFile.Blueprint = new BlueprintSettings();
+                    SaveConfig();
+                }
             }
             catch { Regenerate(); }
         }
@@ -272,6 +310,8 @@ namespace Oxide.Plugins
             public const string MsgDate = "MsgDate";
             public const string MsgDateTime = "MsgDateTime";
             public const string MsgNextWipe = "MsgNextWipe";
+            public const string DescBpWipe = "DescBpWipe";
+            public const string DescMsgBpWipe = "DescMsgBpWipe";
         }
 
         private void LoadDefaultMessages()
@@ -297,6 +337,8 @@ namespace Oxide.Plugins
                 ["MinFormat"] = "<color=orange>{0}</color> minute and <color=orange>{1}</color> seconds",
                 ["MinsFormat"] = "<color=orange>{0}</color> minutes and <color=orange>{1}</color> seconds",
                 ["SecsFormat"] = "<color=orange>{0}</color> seconds",
+                [Msg.DescBpWipe] = "(BP wiped {0})",
+                [Msg.DescMsgBpWipe] = "(Blueprints wiped <color=orange>{0}</color>)"
             }, this);
         }
 
@@ -308,11 +350,13 @@ namespace Oxide.Plugins
         {
             public string Hostname;
             public string Description;
+            public DateTime BlueprintWipe;
 
             public DataFile()
             {
                 Hostname = "";
                 Description = "";
+                BlueprintWipe = DateTime.MinValue;
             }
 
             public DataFile(string hostname, string description)
@@ -416,6 +460,10 @@ namespace Oxide.Plugins
             {
                 output += "\n" + Lang(Msg.DescSeedSize, null, ConVar.Server.worldsize, ConVar.Server.seed);
             }
+            if (CFile.Blueprint.Enabled)
+            {
+                output += " " + Lang(Msg.DescBpWipe, null, DFile.BlueprintWipe.ToString(CFile.Description.Date.Format));
+            }
             return string.Format(CFile.Description.Description, output);
         }
 
@@ -447,13 +495,15 @@ namespace Oxide.Plugins
 
         private string GetFormattedMessage(BasePlayer player)
         {
+            var addition = string.Empty;
+            if (CFile.Blueprint.Enabled) addition = " " + DFile.BlueprintWipe.ToString(CFile.Phrase.Date.Format);
             if (CFile.Phrase.UseTime && !CFile.Phrase.Date.Enabled)
             {
                 var output = Lang(Msg.MsgTime, player.UserIDString, GetFormattedMessageTime());
                 if (CFile.Phrase.Schedule.Enabled)
                     output += "\n" + Lang(Msg.MsgNextWipe, player.UserIDString, CachedWipeTime.AddDays(CFile.Phrase.Schedule.Schedule).ToString(CFile.Phrase.Schedule.Format),
                                   CFile.Phrase.Schedule.Schedule);
-                return output;
+                return output + addition;
             }
             if (CFile.Phrase.Date.Enabled && !CFile.Phrase.UseTime)
             {
@@ -463,7 +513,7 @@ namespace Oxide.Plugins
                     output += Lang(Msg.MsgNextWipe, player.UserIDString, CachedWipeTime.AddDays(CFile.Phrase.Schedule.Schedule).ToString(CFile.Phrase.Schedule.Format),
                         CFile.Phrase.Schedule.Schedule);
                 }
-                return output;
+                return output + addition;
             }
             if (CFile.Phrase.Date.Enabled && CFile.Phrase.UseTime)
             {
@@ -473,12 +523,19 @@ namespace Oxide.Plugins
                     output += "\n" + Lang(Msg.MsgNextWipe, player.UserIDString, CachedWipeTime.AddDays(CFile.Phrase.Schedule.Schedule).ToString(CFile.Phrase.Schedule.Format),
                                   CFile.Phrase.Schedule.Schedule);
                 }
-                return output;
+                return output + addition;
             }
             return null;
         }
 
         #endregion
+
+        private void OnBpsWiped()
+        {
+            PrintWarning("Blueprint wipe detected!");
+            Interface.Oxide.CallHook("OnUsersCleared");
+            Interface.Oxide.DataFileSystem.WriteObject(Name, DFile);
+        }
 
         #endregion
 
@@ -506,6 +563,20 @@ namespace Oxide.Plugins
         private void OnServerInitialized()
         {
             CachedWipeTime = SaveRestore.SaveCreatedTime.ToLocalTime();
+            if (CFile.Blueprint.Enabled)
+            {
+                var persistantPlayers = CachedPersistance.GetValue(ServerMgr.Instance.persistance) as Dictionary<ulong, PersistantPlayer>;
+                if (persistantPlayers != null && persistantPlayers.Count < 0)
+                {
+                    DFile.BlueprintWipe = DateTime.UtcNow;
+                    OnBpsWiped();
+                }
+                if (DFile.BlueprintWipe == null || DFile.BlueprintWipe == DateTime.MinValue)
+                {
+                    DFile.BlueprintWipe = CachedWipeTime;
+                    OnBpsWiped();
+                }
+            }
             if (!CFile.Phrase.Enabled)
             {
                 Unsubscribe("OnPlayerChat");

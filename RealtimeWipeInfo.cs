@@ -1,16 +1,18 @@
-﻿using System;
+﻿// Reference: Facepunch.Sqlite
+
+using System;
 using System.Collections.Generic;
 using System.Reflection;
+using Facepunch.Sqlite;
 using Oxide.Core;
 using Oxide.Core.Plugins;
 using Newtonsoft.Json;
 using Oxide.Core.Libraries.Covalence;
-using ProtoBuf;
 using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Realtime Wipe Info", "Ryan", "2.1.1", ResourceId = 2473)]
+    [Info("Realtime Wipe Info", "Ryan", "2.1.2", ResourceId = 2473)]
     class RealtimeWipeInfo : RustPlugin
     {
         #region Declaration
@@ -39,9 +41,8 @@ namespace Oxide.Plugins
         // Other variables
         private bool NewConfig;
 
-        // Persistance reflection
-        private FieldInfo CachedPersistance = typeof(UserPersistance).GetField("cachedData",
-            BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance | BindingFlags.NonPublic);
+        private FieldInfo _blueprints = typeof(UserPersistance).GetField("blueprints",
+            BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Static);
 
         #endregion
 
@@ -566,8 +567,9 @@ namespace Oxide.Plugins
             CachedWipeTime = SaveRestore.SaveCreatedTime.ToLocalTime();
             if (CFile.Blueprint.Enabled)
             {
-                var persistantPlayers = CachedPersistance.GetValue(ServerMgr.Instance.persistance) as Dictionary<ulong, PersistantPlayer>;
-                if (persistantPlayers != null && persistantPlayers.Count < 0)
+                var blueprints = _blueprints.GetValue(ServerMgr.Instance.persistance) as Database;
+                var playerCount = blueprints?.QueryInt("SELECT COUNT(*) FROM data");
+                if (playerCount != null && playerCount == 0)
                 {
                     DFile.BlueprintWipe = DateTime.UtcNow;
                     OnBpsWiped();

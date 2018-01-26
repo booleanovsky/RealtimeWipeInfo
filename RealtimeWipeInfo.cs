@@ -12,7 +12,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Realtime Wipe Info", "Ryan", "2.1.2", ResourceId = 2473)]
+    [Info("Realtime Wipe Info", "Ryan", "2.1.3", ResourceId = 2473)]
     class RealtimeWipeInfo : RustPlugin
     {
         #region Declaration
@@ -463,7 +463,7 @@ namespace Oxide.Plugins
             }
             if (CFile.Blueprint.Enabled)
             {
-                output += " " + Lang(Msg.DescBpWipe, null, DFile.BlueprintWipe.ToString(CFile.Description.Date.Format));
+                output += " " + Lang(Msg.DescBpWipe, null, DFile.BlueprintWipe.ToLocalTime().ToString(CFile.Description.Date.Format));
             }
             return string.Format(CFile.Description.Description, output);
         }
@@ -498,7 +498,7 @@ namespace Oxide.Plugins
         private string GetFormattedMessage(BasePlayer player)
         {
             var addition = string.Empty;
-            if (CFile.Blueprint.Enabled) addition = " " + DFile.BlueprintWipe.ToString(CFile.Phrase.Date.Format);
+            if (CFile.Blueprint.Enabled) addition = " " + DFile.BlueprintWipe.ToLocalTime().ToString(CFile.Phrase.Date.Format);
             if (CFile.Phrase.UseTime && !CFile.Phrase.Date.Enabled)
             {
                 var output = Lang(Msg.MsgTime, player.UserIDString, GetFormattedMessageTime());
@@ -576,7 +576,7 @@ namespace Oxide.Plugins
                 }
                 if (DFile.BlueprintWipe == null || DFile.BlueprintWipe == DateTime.MinValue)
                 {
-                    DFile.BlueprintWipe = CachedWipeTime;
+                    DFile.BlueprintWipe = SaveRestore.SaveCreatedTime;
                     OnBpsWiped();
                 }
             }
